@@ -10,6 +10,7 @@
 import json
 import os
 import re
+import statistics
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -94,9 +95,12 @@ def measure_body(body):
         # 契约：调用方必须判 None。
         return None
     long_paras = [p for p in paras if len(p) >= 25]
+    plens = [len(p) for p in paras]
 
     nc = len(re.sub(r"\s", "", body)) or 1
     tail_q = sum(1 for p in paras if p.rstrip().endswith(("不是吗？", "不是吗", "不是吗?")))
+    kouxu_counts = [p.count("不是吗") for p in paras]
+    has_k = [c for c in kouxu_counts if c > 0]
     m = {
         "chars": nc,
         "bushi_para": sum(1 for p in paras if "不是吗" in p) / len(paras) * 100,
@@ -114,6 +118,15 @@ def measure_body(body):
         "dang": body.count("当"),
         "short_para_pct": sum(1 for p in paras if len(p) < 80) / len(paras) * 100,
         "para_med": sorted(len(p) for p in long_paras)[len(long_paras) // 2] if long_paras else 0,
+        # ── 第 01 轮盲测回流（2026-09-24）────────────────────────────
+        # 评委 4/4 指认"口癖像打卡一样每段末尾准时报到"。本人 118 篇里 92 篇
+        # 存在单段≥2 的喷发（全库单段最大 10 个），三篇远程稿全是单段最大 1、
+        # 恰好 5/11 段各挂 1 个——"装饰性等距"是他的反签名。
+        "burst_max": max(kouxu_counts),
+        # 盖章模式：含「不是吗」的段≥4 且每段恰好 1 个 → 判为装饰性等距（他不用这种）
+        "kouxu_stamped": 1 if (has_k and len(has_k) >= 4 and max(has_k) == 1) else 0,
+        # 段落长度变异系数：评委"段落长短几乎等宽，人不会这么写"
+        "para_cv": (statistics.stdev(plens) / statistics.mean(plens)) if len(plens) >= 2 else 0,
         "_paras": len(paras),
         "_plist": paras,
     }

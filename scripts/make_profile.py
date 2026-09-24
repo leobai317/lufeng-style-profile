@@ -123,6 +123,90 @@ def dist(vals):
     }
 
 
+def build_samples(rs):
+    """风格样本层（第 01 轮盲测主修，2026-09-24）。
+
+    为什么需要：第 01 轮远程盲测 0/12——画像只有数值时，生成必然是"平均的他"
+    （四评委 4/4 识破）。且量化复核证明：喷发数/盖章模式/段长 CV/间距 CV 四个
+    标量指标**全部不构成判别**——"太工整"活在句子级序列质感里，标量永远抓不住。
+    所以把"他怎么写字"的样子本身放进画像：每类样本带 learn（学什么），生成前必读。
+
+    提取口径：段落按单换行切（_final.json 无空行）；每类每篇至多取 1 条，保多样性。
+    """
+    paras_of = lambda t: [p.strip() for p in re.split(r"\n+", t) if p.strip()]
+    out = {}
+
+    def cap(items, limit, tmax):
+        seen, kept = set(), []
+        for it in items:
+            if it["n"] in seen:
+                continue
+            body = it.get("text") or (it.get("short", "") + it.get("long", ""))
+            if len(body) > tmax:
+                continue
+            seen.add(it["n"])
+            kept.append(it)
+            if len(kept) >= limit:
+                break
+        return kept
+
+    burst, kejian, shix, opening, ending, stance, ragged = [], [], [], [], [], [], []
+    for r in rs:
+        t, n = r["text"], r["n"]
+        ps = paras_of(t)
+        for p in ps:
+            if p.count("不是吗") >= 2:
+                burst.append({"n": n, "text": p}); break
+        m = re.search(r"([^。\n]{15,80}。[^。\n]{0,60}可见，[^。]{8,60}。)", t)
+        if m: kejian.append({"n": n, "text": m.group(1)})
+        for m in re.finditer(r"([^。\n]{10,70}。[^。\n]{0,50}(?:试想|如此这般)[^。]{10,70}。)", t):
+            shix.append({"n": n, "text": m.group(1)}); break
+        if ps:
+            p0 = re.sub(r"\s", "", ps[0])
+            if 30 <= len(p0) <= 120: opening.append({"n": n, "text": ps[0]})
+            if len(ps) >= 2 and "？" in ps[-1] and len(re.sub(r"\s", "", ps[-1])) <= 220:
+                ending.append({"n": n, "text": ps[-1]})
+        if len(ps) >= 4:
+            ls = [len(re.sub(r"\s", "", p)) for p in ps]
+            if min(ls) >= 8 and max(ls) / max(1, min(ls)) >= 5:
+                i_s, i_l = ls.index(min(ls)), ls.index(max(ls))
+                if i_s != i_l and len(ps[i_l]) <= 320:
+                    ragged.append({"n": n, "short": ps[i_s], "long": ps[i_l]})
+        m = re.search(r"[^。！？\n]{0,15}(我是[^。！？\n]{1,18}|我相信[^。！？\n]{1,30}"
+                      r"|我对此[^。！？\n]{1,18}|我看[^。！？\n]{1,25})[！？。]", t)
+        if m: stance.append({"n": n, "text": m.group(0).strip()})
+
+    out["usage"] = ("生文前必读——这是「他怎么写字」的样子。学手法、学气息、学毛边，"
+                    "禁止整句照抄进稿（样本会随语料刷新）。"
+                    "无语料 few-shot 时，本层就是唯一的「手感」来源。")
+    out["kouxu_burst"] = {
+        "learn": ("「不是吗」是情绪喷发：同一段里连用两三次（全库单段最多 4 个），"
+                  "且位置跟着情绪走——绝不是每段末尾打卡。含「不是吗」的段通常只占三到五成，"
+                  "其余段一个都没有，疏密是乱的。"),
+        "items": cap(burst, 8, 400)}
+    out["kejian_link"] = {
+        "learn": ("「可见」必须紧跟具体例证、由例推出结论；收在抽象判断上是空转（自检器会抓）。"),
+        "items": cap(kejian, 8, 220)}
+    out["shixiang"] = {
+        "learn": "「试想／如此这般」的推进式说理：假设下去，把后果说出来。",
+        "items": cap(shix, 6, 220)}
+    out["opening"] = {
+        "learn": "开头直入话题，不摆骨架、不解释结构（评委抓过「首段解释得过于明白」）。",
+        "items": cap(opening, 8, 160)}
+    out["ending"] = {
+        "learn": "结尾常以反问收、直接呼告读者（你呢？不是吗？），但不是每篇都反问。",
+        "items": cap(ending, 8, 240)}
+    out["stance"] = {
+        "learn": ("第一人称立场句：约三分之一篇章出现，可短到「我是赞成的。」——"
+                  "出现时就是亮态度，不出现也不算错（勿当硬指标）。"),
+        "items": cap(stance, 6, 80)}
+    out["ragged"] = {
+        "learn": ("段落长短故意不平整：短段一句一行，长段两三百字——「文似看山不喜平」。"
+                  "每条含同一篇里的最短段与最长段对照。"),
+        "items": cap(ragged, 6, 340)}
+    return out
+
+
 def build():
     rs = rows()
     texts = [r["text"] for r in rs]
@@ -428,6 +512,7 @@ def build():
                         "引用时必须写明是哪一种，不可混用。"},
         "baselines": baselines,
         "wordlists": wordlists,
+        "samples": build_samples(rs),
         "politics": politics,
         "coverage": {k: round(v, 4) for k, v in coverage.items()},
         "truth": truth_all,
@@ -452,6 +537,21 @@ def to_md(p):
         L.append(f"- **{grp}**：" + "；".join(f"{k} {v}" for k, v in kv.items()))
     L += ["", "## 覆盖面", ""]
     L.append("；".join(f"{k} {v:.1%}" for k, v in p["coverage"].items()))
+    s = p.get("samples")
+    if s:
+        L += ["", "## 风格样本层（生文前必读）", "", f"> {s['usage']}", ""]
+        for key in ["kouxu_burst", "kejian_link", "shixiang", "opening",
+                    "ending", "stance", "ragged"]:
+            blk = s.get(key)
+            if not blk:
+                continue
+            L += [f"### {key}（{len(blk['items'])} 例）", "", blk["learn"], ""]
+            for it in blk["items"]:
+                if "short" in it:
+                    L += [f"- （#{it['n']}）短段：{it['short']}", f"  - 同篇最长段：{it['long']}"]
+                else:
+                    L.append(f"- （#{it['n']}）{it['text']}")
+            L.append("")
     return "\n".join(L) + "\n"
 
 
