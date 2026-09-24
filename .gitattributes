@@ -1,0 +1,12 @@
+# 统一换行符为 LF，避免 Windows/macOS/Linux 之间的 CRLF 噪声
+* text=auto eol=lf
+
+# 二进制文件不做换行转换
+*.png binary
+*.jpg binary
+*.gif binary
+*.woff binary
+*.woff2 binary
+
+# GitHub 语言统计：把跨平台仓库误判成 Shell 或 HTML 时用得上
+*.py  linguist-language=Python

@@ -1,0 +1,284 @@
+# -*- coding: utf-8 -*-
+"""
+生成/刷新**作者画像文件（profile）**：把"仿写这个作者要靠哪些判据"变成一个可读、可审计、
+可随语料增长刷新的 JSON。
+
+为什么需要它：
+  1. 自检器的阈值原本硬编码在 `check_draft.py` 的 TARGETS 里，只有作者本人能用，
+     而且**改了语料不会自动跟着变**——这与"阈值必须现算"的约定相冲突。
+  2. 换会话/换目录时，只要带上 profile + 脚本，就能复现同一套判据（skill 自包含）。
+  3. 阈值来自哪个口径、什么时候算的，必须能被查——否则"可审计"是空话。
+
+设计要点：
+  · **真值（truth）由脚本现算**，不许手填；
+  · **目标区间（targets）可以人工收放**——因为带宽是产品判断，不是统计量。
+    凡人工设定的区间一律标 `source: "manual"` 并写明理由；未人工设定的按 RULES 自动派生并标 `"rule"`。
+    刷新 profile 时**保留 manual**，只更新 truth。这样既不会把验证过的带宽冲掉，也能追责。
+  · profile 里带 **语料口径标识**（筛选条件 / 篇数 / 字数 / 生成日期 / 生成脚本），
+    因为同一个名字下的数字在不同口径下不可比。
+
+用法：
+  python make_profile.py                      # 写入 <项目>/profile/lf.json
+  python make_profile.py --out-dir <目录>      # 写到别处（如 skill 的 profile/ 目录）
+  python make_profile.py --md                 # 顺便打印人读画像表
+"""
+import argparse
+import json
+import os
+import re
+import statistics
+import sys
+from collections import Counter
+
+ROOT = None  # 见下方 project_root()
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from profile_io import project_root   # noqa: E402
+from check_draft import measure_body                      # noqa: E402
+from check_flaws2 import metrics as flaws2_metrics        # noqa: E402
+from check_verbosity import metrics as verbosity_metrics  # noqa: E402
+from check_flaws import metrics as flaws_metrics, COLLOQ  # noqa: E402
+
+# 项目根：STYLE_PROJECT 优先，其次脚本的上一级（脚本被复制进 skill 后靠 STYLE_PROJECT / cwd）。
+# **必须在 import 之前定好**——被 import 的那几个模块会读各自的 ROOT/FEAT 路径。
+ROOT = project_root(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+FEAT = os.path.join(ROOT, "corpus_own", "_final.json")
+GEN = "tools/make_profile.py"
+GENERATED_AT = "2026-09-23"
+
+GENRE = "下水议论文"          # 目标文体（子类的第一维）
+NAME_RE = "lf"
+
+# ── 人工设定的目标区间（已验证，勿轻易改；改了要说清为什么）────────────────
+# source=manual 的项在刷新 profile 时**保持不动**，只更新它旁边的 truth。
+MANUAL_BANDS = {
+    # key: (lo, hi, 理由)
+    "chars":          (900, 1150, "浓度峰值档为 800–1099；下限上浮 100 避开'偏短端'，上限取 1099×1.05≈1150"),
+    "bushi_para":     (45, 55,    "子类 45.1%，目标对准子类均值 ±5 个点（产品选择：宁可浓不可淡）"),
+    "tail_q":         (33, 50,    "子类 40.7%；下限≈0.8×、上限≈1.23×"),
+    "last_q":         (1, 1,      "硬签名：多数篇目以反问收尾（覆盖率见下表「覆盖面」，随语料现算）"),
+    "kejian":         (2, 3,      "子类 2.17/千字；千字量级上改用次数带，避免整数量化"),
+    "q":              (5, 7,      "子类 5.83/千字；同上，改次数带"),
+    "tan_pk":         (1.8, 4.0,  "子类中位 2.39——**最显眼的口头习惯，曾整篇漏查**"),
+    "ell_pk":         (0.8, 1.7,  "议论文 1.32；勿用全体值 2.12（那是被散文拉高的）"),
+    "ell_para":       (1, 1,      "概率性手法，1 处即可（覆盖率见「覆盖面」）"),
+    "shixiang":       (1, 1,      "概率性手法，1 次即可（覆盖率见「覆盖面」）"),
+    "arch":           (0, 3,      "逐篇中位 0、P75 2；**勿用旧线 3–4 处**（那个数把「当…时」算成了文言虚词）"),
+    "short_para_pct": (15, 30,    "子类 23.3%；节奏需要两成左右的短段"),
+    "para_med":       (100, 160,  "子类 128 字；段落不许写长"),
+}
+
+# ── 自动派生规则（无人工设定时使用）────────────────────────────────────────
+RULES_NOTE = {
+    "rate": "每千字率类：[0.5×中位, 2.0×中位]（与 check_flaws2 的 band 判据同源）",
+    "pct":  "占比类：±15% 相对",
+    "count": "次数类：[floor(中位×0.7), max(ceil(中位×1.4), 中位+1)]",
+    "binary": "0/1 类：子类覆盖率 ≥60% → (1,1)，否则 (0,1)",
+}
+
+DEFAULT_RATES = ["semicolon", "pause", "dash", "quote", "paren",
+                 "tan_pk", "ell_pk", "kejian_pk", "q_pk"]
+
+
+def rows():
+    with open(FEAT, encoding="utf-8") as f:
+        allrows = json.load(f)
+    return [r for r in allrows
+            if r["verdict"] == "确证" and not r["dup_of"] and r["genre"] == GENRE]
+
+
+def dist(vals):
+    """分布摘要。**精度取 6 位**——4 位会让 0.06645 变成 0.0665，
+    打印成 3 位时进位到 0.067，与"现场直算"的 0.066 差一个末位，
+    又成了"同一指标两个数"。"""
+    v = sorted(vals)
+    n = len(v)
+    return {
+        "n": n,
+        "median": round(statistics.median(v), 6),
+        "mean": round(statistics.mean(v), 6),
+        "p25": round(v[n // 4], 6),
+        "p75": round(v[3 * n // 4], 6),
+        "min": round(v[0], 6),
+        "max": round(v[-1], 6),
+    }
+
+
+def build():
+    rs = rows()
+    texts = [r["text"] for r in rs]
+    total_chars = sum(len(re.sub(r"\s", "", t)) for t in texts)
+
+    # 逐篇三套指标
+    mb = [m for m in (measure_body(t) for t in texts) if m]   # 空正文的篇目返回 None，跳过
+    f2 = [m for m in (flaws2_metrics(t) for t in texts) if m]
+    vb = [verbosity_metrics(t) for t in texts]
+    fl = [flaws_metrics(t, "") for t in texts]
+
+    def d(ms, key):
+        return dist([m[key] for m in ms])
+
+    # ── 覆盖面（用于 0/1 类与"是否常用"的判断）──
+    coverage = {
+        "last_q": sum(1 for m in mb if m["last_q"] == 1) / len(mb),
+        "ell_para": sum(1 for m in mb if m["ell_para"] >= 1) / len(mb),
+        "shixiang": sum(1 for m in mb if m["shixiang"] >= 1) / len(mb),
+        "arch": sum(1 for m in mb if m["arch"] >= 1) / len(mb),
+        "kejian": sum(1 for m in mb if m["kejian"] >= 1) / len(mb),
+        "bushi": sum(1 for m in mb if m["bushi_para"] > 0) / len(mb),
+    }
+
+    # ── targets（稿件级 13 项）：manual 优先，其余按规则派生 ──
+    targets = []
+    for key, label, ms in [
+        ("chars", "总字数", mb), ("bushi_para", "含「不是吗？」段落占比", mb),
+        ("tail_q", "段末反问占比", mb), ("last_q", "篇末是否含反问", mb),
+        ("kejian", "「可见」出现次数", mb), ("q", "问号出现次数", mb),
+        ("tan_pk", "感叹号每千字", mb), ("ell_pk", "省略号每千字", mb),
+        ("ell_para", "「……」独立成段", mb), ("shixiang", "「试想」出现次数", mb),
+        ("arch", "规劝虚词（须/方可/方能/务必/势必）", mb),
+        ("short_para_pct", "短段(<80字)占比", mb), ("para_med", "段落长度中位", mb),
+    ]:
+        t = d(ms, key)
+        if key in MANUAL_BANDS:
+            lo, hi, why = MANUAL_BANDS[key]
+            src = "manual"
+        else:
+            med = t["median"]
+            if key in ("last_q", "ell_para", "shixiang"):
+                cov = coverage.get(key, 0)
+                lo, hi = (1, 1) if cov >= 0.6 else (0, 1)
+                src = "rule"
+                why = f"{RULES_NOTE['binary']}；实测覆盖率 {cov:.1%}"
+            else:
+                lo, hi = round(med * 0.85, 1), round(med * 1.15, 1)
+                src, why = "rule", RULES_NOTE["pct"]
+        targets.append({
+            "key": key, "label": label, "lo": lo, "hi": hi,
+            "source": src, "basis": why,
+            "truth": {"median": t["median"], "mean": t["mean"],
+                      "p25": t["p25"], "p75": t["p75"], "max": t["max"]},
+        })
+
+    # ── baselines（供 check_flaws2 / check_verbosity / check_flaws 的 band 判据用）──
+    baselines = {
+        "flaws2": {k: d(f2, k)["median"] for k in
+                   ["cv", "ratio", "labels", "semicolon", "pause", "dash", "quote", "paren"]},
+        "verbosity": {k: d(vb, k)["median"] for k in
+                      ["red3", "red5", "red9", "sent_med", "sent_mean", "long_sent_pct",
+                       "policy_hits", "policy_pk"]},
+        "flaws": {k: d(fl, k)["median"] for k in
+                  ["tan_pk", "q_pk", "rep_ratio", "aa_pk", "collq_pk"]},
+    }
+    baselines["flaws2"]["ev_rate"] = round(
+        statistics.median([m["ev_rate"] for m in f2 if m["ev_rate"] is not None]), 2)
+
+    # ── 词表 ──
+    wordlists = {
+        "materials_ok": ["毛泽东", "史铁生", "黄文秀", "鲁迅", "路遥", "张桂梅", "袁隆平"],
+        "offlist_suspect": ["苏轼", "长征", "刀郎", "张雪峰", "全红婵", "钟南山"],
+        "topic_given": ["长征"],
+        "colloquial": COLLOQ,
+        "policy_words": ["习主席", "习近平", "五年规划", "十四五", "一带一路", "长江禁渔",
+                         "生态文明", "脱贫攻坚", "脱贫", "乡村振兴", "改革开放", "高考改革",
+                         "抗疫", "中国梦", "中华民族伟大复兴", "两个一百年", "绿水青山",
+                         "金山银山", "国家队", "党"],
+        "fingerprints": {
+            "不是吗": "2.60/千字（全体）/ 3.51（议论文）——最强的签名",
+            "可见": "1.60/千字（全体）/ 2.17（议论文）",
+            "试想": "0.18/千字",
+            "须": "0.45/千字，只覆盖 30.5% 的篇目",
+        },
+    }
+
+    truth_all = {
+        "draft": {t["key"]: t["truth"] for t in targets},
+        "flaws2": {k: d(f2, k) for k in
+                   ["cv", "ratio", "labels", "semicolon", "pause", "dash", "quote", "paren"]},
+        "verbosity": {k: d(vb, k) for k in
+                      ["red3", "red5", "red9", "sent_med", "sent_mean", "long_sent_pct",
+                       "policy_hits", "policy_pk"]},
+        "flaws": {k: d(fl, k) for k in ["tan_pk", "q_pk", "rep_ratio", "aa_pk", "collq_pk"]},
+    }
+
+    return {
+        "profile_id": "lf",
+        "author": NAME_RE,
+        "generated_at": GENERATED_AT,
+        "generator": GEN,
+        "caliber": {
+            "source": "corpus_own/_final.json",
+            "filter": f"verdict=确证 AND dup_of=空 AND genre={GENRE}",
+            "n": len(rs),
+            "chars": total_chars,
+            "note": "字数=剥离空白；指标=先逐篇算再取中位/均值。"
+                    "改语料后必须重跑本脚本刷新 truth；手动设定的区间（source=manual）会保留。",
+        },
+        "subclass": f"{GENRE} · 古语辩证类 · 约 {MANUAL_BANDS['chars'][0]}–{MANUAL_BANDS['chars'][1]} 字",
+        "targets": {"draft": targets},
+        "baselines": baselines,
+        "wordlists": wordlists,
+        "coverage": {k: round(v, 4) for k, v in coverage.items()},
+        "truth": truth_all,
+        "rules": RULES_NOTE,
+    }
+
+
+def to_md(p):
+    L = [f"# 画像 · {p['author']}（{p['profile_id']}）", ""]
+    c = p["caliber"]
+    L += [f"> 口径：{c['filter']}　→　**{c['n']} 篇 / {c['chars']:,} 字**",
+          f"> 生成：{p['generator']}　于 {p['generated_at']}", ""]
+    L += ["## 稿件级目标区间（自检器用）", "",
+          "| 指标 | 目标 | 来源 | 真值中位 | 均值 | P25 | P75 | 依据 |",
+          "|---|---|---|---|---|---|---|---|"]
+    for t in p["targets"]["draft"]:
+        tr = t["truth"]
+        L.append(f"| {t['label']} | **{t['lo']}–{t['hi']}** | {t['source']} | "
+                 f"{tr['median']} | {tr['mean']} | {tr['p25']} | {tr['p75']} | {t['basis']} |")
+    L += ["", "## 基线（判据带用）", ""]
+    for grp, kv in p["baselines"].items():
+        L.append(f"- **{grp}**：" + "；".join(f"{k} {v}" for k, v in kv.items()))
+    L += ["", "## 覆盖面", ""]
+    L.append("；".join(f"{k} {v:.1%}" for k, v in p["coverage"].items()))
+    return "\n".join(L) + "\n"
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--out-dir", default=os.path.join(ROOT, "profile"))
+    ap.add_argument("--md", action="store_true")
+    args = ap.parse_args()
+
+    p = build()
+    os.makedirs(args.out_dir, exist_ok=True)
+    jp = os.path.join(args.out_dir, "lf.json")
+    mp = os.path.join(args.out_dir, "lf.md")
+
+    # 保留已有的人工区间（若存在），只更新真值
+    if os.path.exists(jp):
+        with open(jp, encoding="utf-8") as f:
+            old = json.load(f)
+        old_map = {t["key"]: t for t in old.get("targets", {}).get("draft", [])
+                   if t.get("source") == "manual"}
+        for t in p["targets"]["draft"]:
+            if t["key"] in old_map:
+                t["lo"], t["hi"] = old_map[t["key"]]["lo"], old_map[t["key"]]["hi"]
+                t["source"] = "manual"
+                t["basis"] = old_map[t["key"]].get("basis", t["basis"])
+
+    with open(jp, "w", encoding="utf-8") as f:
+        json.dump(p, f, ensure_ascii=False, indent=2)
+    with open(mp, "w", encoding="utf-8") as f:
+        f.write(to_md(p))
+    print(f"已写入 {jp}")
+    print(f"已写入 {mp}")
+    print(f"口径：{p['caliber']['n']} 篇 / {p['caliber']['chars']:,} 字")
+
+    if args.md:
+        print()
+        print(to_md(p))
+
+
+if __name__ == "__main__":
+    main()
