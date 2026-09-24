@@ -48,6 +48,11 @@
 | `check_flaws2.py` | 例证段收口率、段长起伏（变异系数）、贴标签起句、标点密度 |
 | `check_verbosity.py` | 句长均值、长句占比、冗余度、政策词密度 |
 | `check_flaws.py` | 感叹号、叠字、口语词 |
+| **`check_title.py`** | **标题长度与结构类型，多篇时还查「类型分散度」** |
+
+> **标题单独列一项**，因为它最容易漏：标题在稿件第一行，程序化读正文时会被当"元信息"跳过。
+> 实测后果是三篇仿稿的标题全落进同一个类型（占真值 18.8%），而作者占比最高的两种
+> （冒号式 41.0% / 单句 37.6%）一次没用。**越显眼的位置，越不能有规律性。**
 
 ---
 
@@ -123,17 +128,18 @@ python scripts/make_profile.py --md
 ## 七、目录
 
 ```
-scripts/    24 个脚本，纯标准库
+scripts/    26 个脚本，纯标准库
   ├─ 语料管线    extract → review → clean → dump_batches → aggregate → dedupe
   ├─ 画像        make_profile / strata_stats / strata_extra / structure_stats
   │              critique_stats / column_stats / fingerprint / profile_io
-  ├─ 自检        check_draft / check_flaws / check_flaws2 / check_verbosity
+  ├─ 自检        check_draft / check_flaws / check_flaws2 / check_verbosity / check_title
+  │              标题画像 title_stats
   └─ 盲测        build_blindtest_naive / build_expert_test / pick_controls / tally_human_scores
 profile/
   ├─ lf.json   机器读：targets / baselines / wordlists / truth / caliber / rules
   └─ lf.md     人读
 docs/
-  ├─ methodology.md   方法论的四个可迁移发现（含踩过的坑）
+  ├─ methodology.md   方法论的可迁移发现（五个，含踩过的坑）
   ├─ pitfalls.md      应试下水文的四类常见论证缺陷（通用清单）
   └─ portability.md   可移植性说明
 ```

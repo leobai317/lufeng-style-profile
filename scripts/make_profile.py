@@ -191,8 +191,77 @@ def build():
         },
     }
 
+    # ── 标题画像（2026-09-24 补：此前完全漏掉的一块）────────────────────
+    # 为什么值得单列：标题是全文最显眼的部分，而**类型分布本身就是签名**。
+    # 三篇稿子若全用同一个类型，比正文用词偏差更容易被认出来——
+    # 实测过：三篇仿稿的标题全落进 18.8% 的「逗号双分句」，而他 41% 的冒号式一次没用。
+    titles = [re.sub(r"\s", "", (r.get("headline") or "")) for r in rs]
+    titles = [t for t in titles if t]
+    nt = len(titles)
+
+    def has_any(t, *cs):
+        return any(c in t for c in cs)
+
+    def trate(pred):
+        return round(sum(1 for t in titles if pred(t)) / nt * 100, 1)
+
+    title_truth = {
+        "chars": dist([len(t) for t in titles]),
+        "colon_pct": trate(lambda t: has_any(t, "：", ":")),
+        "comma_only_pct": trate(lambda t: has_any(t, "，") and not has_any(t, "：", ":")),
+        "plain_pct": trate(lambda t: not has_any(t, "：", ":", "，", "；", "、", "·", "•")),
+        "three_item_pct": trate(lambda t: len(re.split(r"[、·•，,]", t)) >= 3),
+        "mid_dot_pct": trate(lambda t: has_any(t, "·", "•")),
+        "quote_pct": trate(lambda t: has_any(t, "“", "”")),
+        "first_person_pct": trate(lambda t: has_any(t, "我")),
+        "question_pct": trate(lambda t: has_any(t, "？", "?")),
+        "dunhao_pct": trate(lambda t: has_any(t, "、")),
+    }
+
+    # 题面词复现率：从源文件名里抽出带引号的题面，看标题有没有回扣它的词。
+    # ⚠ 分母必须与上面一致——只用**有 headline 的篇目**。
+    # （第一版写成遍历全部 rs，把 headline 为空的那篇也算进了分母，于是 57.4% 变 56.4%，
+    #   又成了"同一指标两个数"。）
+    echo_hit = echo_tot = 0
+    for r in rs:
+        title = re.sub(r"\s", "", r.get("headline") or "")
+        if not title:
+            continue
+        m = re.search(r"[“「]([^”」]{2,20})[”」]", r.get("src") or "")
+        if not m:
+            continue
+        echo_tot += 1
+        words = [w for w in re.split(r"[与和，,、：:\s]+", m.group(1)) if len(w) >= 2]
+        if any(w in title for w in words):
+            echo_hit += 1
+    title_truth["topic_echo_pct"] = round(echo_hit / echo_tot * 100, 1) if echo_tot else None
+    title_truth["topic_echo_n"] = echo_tot
+
+    tc = title_truth["chars"]
+    targets_title = {
+        "chars_band": [int(tc["p25"]), int(tc["p75"])],
+        "chars_why": f"P25–P75；中位 {tc['median']:.0f} 字"
+                     f"（最短 {tc['min']:.0f} / 最长 {tc['max']:.0f}）",
+        "structure_mix": {
+            "冒号式（话题词：判断）": title_truth["colon_pct"],
+            "单句无标记": title_truth["plain_pct"],
+            "逗号双分句": title_truth["comma_only_pct"],
+            "三项以上并列": title_truth["three_item_pct"],
+        },
+        "topic_echo_pct": title_truth["topic_echo_pct"],
+        "hard_rules": [
+            f"顿号「、」{title_truth['dunhao_pct']}% —— 标题里基本不用顿号，出现即为破绽",
+            f"问号 {title_truth['question_pct']}% —— 标题几乎不用问号"
+            "（与正文篇末 78% 用反问形成反差，这本身是签名）",
+            f"三项并列时用中点「·／•」（{title_truth['mid_dot_pct']}%），不用顿号/逗号",
+            f"多篇之间**结构类型必须分散**——不要三篇全用同一种",
+        ],
+        "truth": title_truth,
+    }
+
     truth_all = {
         "draft": {t["key"]: t["truth"] for t in targets},
+        "title": title_truth,
         "flaws2": {k: d(f2, k) for k in
                    ["cv", "ratio", "labels", "semicolon", "pause", "dash", "quote", "paren"]},
         "verbosity": {k: d(vb, k) for k in
@@ -215,7 +284,7 @@ def build():
                     "改语料后必须重跑本脚本刷新 truth；手动设定的区间（source=manual）会保留。",
         },
         "subclass": f"{GENRE} · 古语辩证类 · 约 {MANUAL_BANDS['chars'][0]}–{MANUAL_BANDS['chars'][1]} 字",
-        "targets": {"draft": targets},
+        "targets": {"draft": targets, "title": targets_title},
         "baselines": baselines,
         "wordlists": wordlists,
         "coverage": {k: round(v, 4) for k, v in coverage.items()},

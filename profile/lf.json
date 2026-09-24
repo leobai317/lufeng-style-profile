@@ -208,7 +208,49 @@
           "max": 307
         }
       }
-    ]
+    ],
+    "title": {
+      "chars_band": [
+        11,
+        17
+      ],
+      "chars_why": "P25–P75；中位 14 字（最短 3 / 最长 27）",
+      "structure_mix": {
+        "冒号式（话题词：判断）": 41.0,
+        "单句无标记": 37.6,
+        "逗号双分句": 18.8,
+        "三项以上并列": 5.1
+      },
+      "topic_echo_pct": 57.4,
+      "hard_rules": [
+        "顿号「、」0.0% —— 标题里基本不用顿号，出现即为破绽",
+        "问号 0.9% —— 标题几乎不用问号（与正文篇末 78% 用反问形成反差，这本身是签名）",
+        "三项并列时用中点「·／•」（4.3%），不用顿号/逗号",
+        "多篇之间**结构类型必须分散**——不要三篇全用同一种"
+      ],
+      "truth": {
+        "chars": {
+          "n": 117,
+          "median": 14,
+          "mean": 13.957265,
+          "p25": 11,
+          "p75": 17,
+          "min": 3,
+          "max": 27
+        },
+        "colon_pct": 41.0,
+        "comma_only_pct": 18.8,
+        "plain_pct": 37.6,
+        "three_item_pct": 5.1,
+        "mid_dot_pct": 4.3,
+        "quote_pct": 19.7,
+        "first_person_pct": 11.1,
+        "question_pct": 0.9,
+        "dunhao_pct": 0.0,
+        "topic_echo_pct": 57.4,
+        "topic_echo_n": 54
+      }
+    }
   },
   "baselines": {
     "flaws2": {
@@ -401,6 +443,28 @@
         "p75": 177,
         "max": 307
       }
+    },
+    "title": {
+      "chars": {
+        "n": 117,
+        "median": 14,
+        "mean": 13.957265,
+        "p25": 11,
+        "p75": 17,
+        "min": 3,
+        "max": 27
+      },
+      "colon_pct": 41.0,
+      "comma_only_pct": 18.8,
+      "plain_pct": 37.6,
+      "three_item_pct": 5.1,
+      "mid_dot_pct": 4.3,
+      "quote_pct": 19.7,
+      "first_person_pct": 11.1,
+      "question_pct": 0.9,
+      "dunhao_pct": 0.0,
+      "topic_echo_pct": 57.4,
+      "topic_echo_n": 54
     },
     "flaws2": {
       "cv": {
