@@ -259,6 +259,78 @@ def build():
         "truth": title_truth,
     }
 
+    # ── 政治类素材：**放开使用 + 引语数据必须可核**（2026-09-24 政策调整）──
+    # 原先是「一律不仿」，实测代价是丢掉 28.8% 篇目的例证重心，换来的是一个说不清数
+    # 的"先天欠账"。改为放开后发现：真正的风险不在"用了政治素材"（那是高考下水作文的
+    # 常态），而在**编造或记错**——第一次核验就抓到一处失实（某书的字数，两个权威
+    # 来源互相矛盾，稿子里写了第三个数字）。所以规则从"禁写"改成"用 + 核验"。
+    POL_WORDS = {
+        "领袖": ["习近平", "习主席", "总书记", "毛泽东", "周恩来", "邓小平", "朱德",
+                 "刘少奇", "陈云"],
+        "党史": ["党的二十大", "党中央", "党史", "井冈山", "延安", "遵义会议", "革命先烈",
+                 "共产党人", "红军", "长征", "抗战", "先烈", "苏区", "革命根据"],
+        "政策": ["十四五", "五年规划", "一带一路", "脱贫攻坚", "乡村振兴", "生态文明",
+                 "社会主义核心价值观", "全面小康", "共同富裕", "中国式现代化", "双减", "新课标"],
+        "楷模": ["黄文秀", "张桂梅", "钟南山", "袁隆平", "屠呦呦", "钱学森", "邓稼先", "樊锦诗"],
+    }
+    pol_cov = {t: round(sum(1 for r in rs if any(w in r["text"] for w in ws)) / len(rs), 4)
+               for t, ws in POL_WORDS.items()}
+    BANNED_TIERS = ("领袖", "党史", "政策")   # 原先被"铁律4"禁掉的那三层（楷模层本来就没禁）
+    pol_banned = round(sum(1 for r in rs if any(
+        any(w in r["text"] for w in POL_WORDS[t]) for t in BANNED_TIERS)) / len(rs), 4)
+    pol_banned_n = round(pol_banned * len(rs))
+    pol_any = round(sum(1 for r in rs
+                        if any(w in r["text"] for ws in POL_WORDS.values() for w in ws))
+                    / len(rs), 4)
+    pol_n = round(pol_any * len(rs))
+
+    politics = {
+        "policy": "放开使用；但**引语与具体数据必须可核**——不得编造，不得凭记忆写数",
+        "why": (f"原先被禁的三层（领袖／党史／政策）就覆盖 **{pol_banned:.1%}** 的篇目"
+                f"（{pol_banned_n}/{len(rs)}）；再加上一直在白名单里的楷模层，"
+                f"政治相关素材共覆盖 **{pol_any:.1%}**（{pol_n}/{len(rs)}）。"
+                "一律回避等于丢掉这块相似度，换来的却只是一个说不清数的『先天欠账』。"
+                "实测风险不在『用了』，在『编造或记错』——故规则从禁写改为用+核验。"),
+        "coverage": dict(pol_cov, 被禁三层并集=pol_banned, 全部政治相关并集=pol_any),
+        "tiers": {
+            "可正常用": ["党史与革命史（长征、抗战、红军）", "时代楷模与英模（黄文秀、张桂梅）",
+                        "科学家（屠呦呦、袁隆平、钱学森）", "国家成就（脱贫攻坚、航天）"],
+            "用前必须核实": ["领袖与领导人的原话引用", "一切具体数字（百分比／次数／年数／字数）",
+                          "政策专名与官方表述"],
+            "仍不写": ["编造领袖言论或官方文件表述", "对政策的评价性议论（超出范文常规）",
+                     "涉敏感议题的表述"],
+        },
+        # 已核实的事实：稿子里凡出现这些断言，直接标"已核"，不必重复查。
+        # 没查过的 → check_politics.py 会列为待核验。
+        "verified": [
+            {"claim": "毛泽东读《伦理学原理》批注一万二千余字", "status": "核",
+             "src": "央广网／人民网党史／中国军网 一致", "checked": "2026-09-24"},
+            {"claim": "该书全书字数（12万 / 8万多 两种说法）", "status": "⚠ 来源矛盾，不得写",
+             "src": "人民网党史『12万字』 vs 人民网『8万多字』", "checked": "2026-09-24"},
+            {"claim": "批注用语「此说终觉不完满」「此节不当」", "status": "核",
+             "src": "人民网党史学习教育官网（毛泽东读书笔记三类及其批注实例）",
+             "checked": "2026-09-24"},
+            {"claim": "黄文秀任百坭村第一书记，贫困发生率 22.88%→2.71%（稿中可写作『百分之二十二』『百分之二点七』）",
+             "status": "核", "src": "新华社／央视／中央党史和文献研究院 一致",
+             "checked": "2026-09-24"},
+            {"claim": "黄文秀带领村民发展砂糖橘、硬化道路", "status": "核",
+             "src": "同上", "checked": "2026-09-24"},
+            {"claim": "红军长征二万五千里", "status": "核",
+             "src": "人民网党史（1935 年毛泽东语『最多的走了二万五千里』，指红一方面军走得最远的部队）",
+             "checked": "2026-09-24"},
+            {"claim": "「有气则有势，有识则有度，有情则有韵，有趣则有味」", "status": "核",
+             "src": "曾国藩，同治四年六月初一日《谕纪泽纪鸿》家书；"
+                    "贵州政协／湖南图书馆／人民日报 一致",
+             "checked": "2026-09-24"},
+        ],
+        # 行文引号（强调用法），不是引文——检查器不该把这类列为"待核验"。
+        # 第一版没这一层，结果把「一个废人」「贫困本该如此」「雪山草地」
+        # 这类自造引号全报成待核，清单变噪音，真该核的几条反被淹掉。
+        "non_claims": ["一个废人", "贫困本该如此", "雪山草地", "为什么走",
+                       "当时不杂", "未来不迎", "横眉冷对", "眼力"],
+        "wordlists": POL_WORDS,
+    }
+
     truth_all = {
         "draft": {t["key"]: t["truth"] for t in targets},
         "title": title_truth,
@@ -269,6 +341,14 @@ def build():
                        "policy_hits", "policy_pk"]},
         "flaws": {k: d(fl, k) for k in ["tan_pk", "q_pk", "rep_ratio", "aa_pk", "collq_pk"]},
     }
+
+    # 零中位指标要额外记**覆盖率**：这类指标的"中位=0"会让比率判据失效
+    # （任何非零值都 > 0×3），判定只能靠"他本人的上界 + 有多少篇目用"。
+    # 见 check_flaws2.py 的 lower 分支。
+    _lab = [m["labels"] for m in f2]
+    if _lab:
+        truth_all["flaws2"]["labels"]["_coverage"] = round(
+            sum(1 for x in _lab if x >= 1) / len(_lab), 4)
 
     return {
         "profile_id": "lf",
@@ -287,6 +367,7 @@ def build():
         "targets": {"draft": targets, "title": targets_title},
         "baselines": baselines,
         "wordlists": wordlists,
+        "politics": politics,
         "coverage": {k: round(v, 4) for k, v in coverage.items()},
         "truth": truth_all,
         "rules": RULES_NOTE,

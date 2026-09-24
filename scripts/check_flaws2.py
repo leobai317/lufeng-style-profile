@@ -143,7 +143,27 @@ def main():
         if rule == "higher":
             verdict = "❌ 明显偏低" if dv < med * 0.6 else ("⚠ 偏低" if dv < med * 0.85 else "OK")
         elif rule == "lower":
-            verdict = "❌ 明显偏高" if dv > med * 3 and dv > 0 else "OK"
+            # ⚠ 中位为 0 时**比率判据失效**：`dv > med*3` 会退化成 `dv > 0`，
+            # 于是任何非零值都判"明显偏高"。
+            # 而「贴标签起句」他本人是在用的：9/118 篇（7.6%），最多的一篇用了 4 次。
+            # 照旧判据，他自己那 9 篇也会全被判违规——判据在惩罚真文。
+            # 改用**他本人的分布上界**：超过他任何一篇才算越界；1..上界之间只提示。
+            if med > 0:
+                verdict = "❌ 明显偏高" if dv > med * 3 else "OK"
+            else:
+                dist = (PROFILE_TRUTH or {}).get(key) or {}
+                cap = dist.get("max")
+                if cap is None:
+                    vals = [m[key] for m in use if m[key] is not None]
+                    cap = max(vals) if vals else 0
+                share = dist.get("_coverage")
+                if dv > cap:
+                    verdict = f"❌ 超过他本人最大值（{cap:.0f} 次）"
+                elif dv >= 1:
+                    verdict = (f"⚠ 稀疏手法：他仅少数篇目用、{cap:.0f} 次封顶"
+                               f"{f'（覆盖 {share:.1%}）' if share else ''}——确认是刻意选择")
+                else:
+                    verdict = "OK"
         else:
             verdict = "—" if dv == 0 and med == 0 else (
                 "❌ 为 0" if dv == 0 and med > 1 else
