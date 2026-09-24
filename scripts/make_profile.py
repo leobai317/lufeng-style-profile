@@ -79,6 +79,25 @@ RULES_NOTE = {
 DEFAULT_RATES = ["semicolon", "pause", "dash", "quote", "paren",
                  "tan_pk", "ell_pk", "kejian_pk", "q_pk"]
 
+# ── 题材维度（多标签）────────────────────────────────────────────────────
+# 用途：外部题目进来后，先判它落在哪个题材，再取**该题材的阈值**。
+# 为什么不能只用 targets.draft（全子类汇总值）：题材间方差很大——
+#   辩证·哲思类   段末反问 43.3% / 篇末反问 83.9%
+#   青年·成长类   段末反问 27.2% / 篇末反问 60.7%
+# 拿全子类均值去写青年类题目，会写得比他浓近一倍。这与"混合平均会骗人"同一个病根。
+TOPICS = [
+    ("科技·数据·AI", r"人工智能|AI|数据|科技|算法|数字|网络|信息|机器学习"),
+    ("文化·传统·课本", r"文化|传统|古诗|经典|课本|戏曲|文言|先贤|国学"),
+    ("青年·成长·人生", r"青年|青春|成长|人生|奋斗|少年|学生|选择"),
+    ("家国·时代·使命", r"国家|民族|时代|现代化|复兴|强国|家国|使命|长征"),
+    ("辩证·哲思", r"辩证|一概而论|矛盾|对立|统一|取舍|进退|尺度|边界"),
+]
+
+# 题材 → 什么素材：分析器据共现频次给建议（不写死"某题必用某人"）
+TOPIC_MATS = ["毛泽东", "史铁生", "黄文秀", "鲁迅", "路遥", "张桂梅", "袁隆平",
+              "陶行知", "钱学森", "屠呦呦", "樊锦诗", "钟南山",
+              "习主席", "红军", "长征"]
+
 
 def rows():
     with open(FEAT, encoding="utf-8") as f:
@@ -178,6 +197,9 @@ def build():
         "materials_ok": ["毛泽东", "史铁生", "黄文秀", "鲁迅", "路遥", "张桂梅", "袁隆平"],
         "offlist_suspect": ["苏轼", "长征", "刀郎", "张雪峰", "全红婵", "钟南山"],
         "topic_given": ["长征"],
+        # 题材分类器（多标签）：analyze_topic.py 用它给**外部题目**归类。
+        # 放在这里而不是脚本里，是为了让"改题材定义"＝改画像，不用改代码。
+        "topics": {name: pat for name, pat in TOPICS},
         "colloquial": COLLOQ,
         "policy_words": ["习主席", "习近平", "五年规划", "十四五", "一带一路", "长江禁渔",
                          "生态文明", "脱贫攻坚", "脱贫", "乡村振兴", "改革开放", "高考改革",
@@ -258,6 +280,40 @@ def build():
         ],
         "truth": title_truth,
     }
+
+    # ── 题材带：题目分析器按题材取阈值（不是全子类均值）────────────────────
+    # 每个题材给：篇数 + 段末/篇末反问 + 「可见」与问号密度 + 段落中位 + 该题材的高频素材。
+    # analyze_topic.py 读它，决定"这道题该按哪一列的浓度写"。
+    topic_bands = {}
+    for _tname, _tpat in TOPICS:
+        sub_texts = [r["text"] for r in rs if re.search(_tpat, r["text"])]
+        if len(sub_texts) < 5:          # 样本太少不给带——免得拿 3 篇当"真值"
+            continue
+        sm = [m for m in (measure_body(t) for t in sub_texts) if m]
+        if not sm:
+            continue
+
+        def _med(key):
+            v = sorted(x[key] for x in sm)
+            return v[len(v) // 2]
+
+        mat_c = Counter()
+        for _r in rs:
+            if re.search(_tpat, _r["text"]):
+                for _m in TOPIC_MATS:
+                    if _m in _r["text"]:
+                        mat_c[_m] += 1
+        topic_bands[_tname] = {
+            "n": len(sm),
+            "share": round(len(sm) / len(rs), 4),
+            "tail_q": round(_med("tail_q"), 1),
+            "last_q": round(sum(1 for x in sm if x["last_q"] == 1) / len(sm) * 100, 1),
+            "bushi_para": round(_med("bushi_para"), 1),
+            "kejian_pk": round(_med("kejian_pk"), 2),
+            "q_pk": round(_med("q_pk"), 2),
+            "para_med": int(_med("para_med")),
+            "materials": [m for m, _ in mat_c.most_common(8)],
+        }
 
     # ── 政治类素材：**放开使用 + 引语数据必须可核**（2026-09-24 政策调整）──
     # 原先是「一律不仿」，实测代价是丢掉 28.8% 篇目的例证重心，换来的是一个说不清数
@@ -364,7 +420,12 @@ def build():
                     "改语料后必须重跑本脚本刷新 truth；手动设定的区间（source=manual）会保留。",
         },
         "subclass": f"{GENRE} · 古语辩证类 · 约 {MANUAL_BANDS['chars'][0]}–{MANUAL_BANDS['chars'][1]} 字",
-        "targets": {"draft": targets, "title": targets_title},
+        "targets": {"draft": targets, "title": targets_title, "topic_bands": topic_bands,
+                    "topic_bands_note":
+                        "口径 = **先逐篇算再取中位**（与 targets.draft 同源）。"
+                        "strata_stats.py 的 D3b 表用的是 pooled（合并全部文本后算），"
+                        "两者会有可见差异——实测辩证类段末反问 33.3%（本表）vs 43.3%（pooled）。"
+                        "引用时必须写明是哪一种，不可混用。"},
         "baselines": baselines,
         "wordlists": wordlists,
         "politics": politics,

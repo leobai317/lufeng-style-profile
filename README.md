@@ -40,7 +40,18 @@
 | **③ 复核** | 分段打风险旗标 → 逐段判「确证／存疑／排除」→ 查重去重 | `review_own_corpus.py`、`dedupe_corpus.py`、`aggregate_corpus.py` |
 | **④ 画像** | 分目别类算分布 → 写入 profile，供自检器读阈值 | `make_profile.py`、`strata_stats.py` |
 
-写稿之后，四套自检器逐项核对：
+题目进来之后，先出一张**施工单**再动笔：
+
+| 脚本 | 出什么 |
+|---|---|
+| **`analyze_topic.py`** | 题材归属（决定用哪列阈值）／可比篇目与相似度天花板／结构类型／素材池与标题建议 |
+
+> **为什么需要它**：原来的流程写着"定题 → 确认"，暗含的假设是"题目从作者自己的题库里挑"。
+> 用户给一道外部题时，该按哪一列阈值写、他写过多少接近的题、用哪种结构，全都没判，只能靠事后自检去补。
+> 实测两个坑：**题面往往不含任何题材词**（古语类必然如此，靠题型推断兜底）；
+> **题眼常落在引号里**（`'输与赢'`），第一版把引号当标点洗掉，只剩「理解」这类套话。
+
+写稿之后，五套自检器逐项核对：
 
 | 脚本 | 查什么 |
 |---|---|
@@ -132,12 +143,13 @@ python scripts/make_profile.py --md
 ## 七、目录
 
 ```
-scripts/    27 个脚本，纯标准库
+scripts/    28 个脚本，纯标准库
   ├─ 语料管线    extract → review → clean → dump_batches → aggregate → dedupe
+  ├─ 题目        analyze_topic（题目施工单）
   ├─ 画像        make_profile / strata_stats / strata_extra / structure_stats
   │              critique_stats / column_stats / fingerprint / profile_io
-  ├─ 自检        check_draft / check_flaws / check_flaws2 / check_verbosity / check_title
-  │              标题画像 title_stats
+  ├─ 自检        check_draft / check_flaws / check_flaws2 / check_verbosity
+  │              check_title + 标题画像 title_stats / check_politics
   └─ 盲测        build_blindtest_naive / build_expert_test / pick_controls / tally_human_scores
 profile/
   ├─ lf.json   机器读：targets / baselines / wordlists / truth / caliber / rules
