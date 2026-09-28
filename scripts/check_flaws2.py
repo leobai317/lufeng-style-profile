@@ -24,7 +24,7 @@ ROOT = project_root(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 FEAT = os.path.join(ROOT, "corpus_own", "_final.json")
 # ⚠ 稿件路径**必须在 main() 里取**，不能放模块级——否则被别的脚本 import 时
 #   会把那个脚本的 argv 当成稿件路径。
-DEFAULT_DRAFT = os.path.join(ROOT, "首篇-裸文版.md")
+DEFAULT_DRAFT = os.path.join(ROOT, "稿件", "首篇-裸文版.md")
 
 PROFILE, PROFILE_PATH = find_profile()
 PROFILE_BASE = profile_baseline(PROFILE, "flaws2")
@@ -75,6 +75,29 @@ def metrics(text):
         "quote": (text.count("“") + text.count("”")) / nc * 1000,
         "paren": text.count("（") / nc * 1000,
     }
+
+
+def kejian_new_material(text, mats):
+    """第 03 轮 §4.2：「可见」是否被拿来引入**新**例证。
+
+    真值（118 篇全量核验）：262 个「可见」句里只有 1 句（0.4%）引入首次出现的素材。
+    所以仿写时**不用**这种写法——但反过来，它也不能当作"非他所写"的证据
+    （稀有 ≠ 非他，见项目铁律）。
+    """
+    seen, bad = set(), []
+    for p in re.split(r"\n+", text):
+        for s in re.split(r"(?<=[。！？；])", p):
+            s = s.strip()
+            if not s:
+                continue
+            if "可见" in s:
+                fresh = [m for m in mats if m in s and m not in seen]
+                if fresh:
+                    bad.append((fresh, s[:50]))
+            for m in mats:
+                if m in s:
+                    seen.add(m)
+    return bad
 
 
 def main():
@@ -172,6 +195,16 @@ def main():
 
     print(f"\n仿稿段长：{d['paras']} 段，最短 {d['len_min']} 字 / 最长 {d['len_max']} 字")
     print(f"仿稿例证段：{d['ev']} 段，其中收口 {d['ev_closed']} 段")
+
+    # ── 第 03 轮 §4.2：「可见」不得借来引入新例证 ────────────────────
+    mats = (PROFILE or {}).get("wordlists", {}).get("materials_ok") or MATERIALS
+    bad = kejian_new_material("\n".join(dl[1:]), mats)
+    print("\n「可见」是否借来引入新例证（真文 1/262 = 0.4%）：")
+    if bad:
+        for fresh, s in bad:
+            print(f"  ⚠ 引入新素材 {'、'.join(fresh)}：{s}…")
+    else:
+        print("  ✓ 无（「可见」都由已给出的例证推出结论）")
 
 
 if __name__ == "__main__":

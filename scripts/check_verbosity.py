@@ -91,7 +91,7 @@ def collect_drafts(argv):
         return {os.path.basename(p): p for p in argv}
     out = {}
     for fn in DRAFTS:
-        p = os.path.join(ROOT, fn)
+        p = os.path.join(ROOT, "稿件", fn)
         if os.path.exists(p):
             out[fn] = p
     return out

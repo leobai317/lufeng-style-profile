@@ -101,7 +101,7 @@ def compare_drafts(titles):
     print("=== 三篇仿稿的标题 vs 他的习惯 ===")
     ROOT2 = project_root(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     for pre in ("首篇", "第二篇", "第三篇"):
-        p = os.path.join(ROOT2, f"{pre}-裸文版.md")
+        p = os.path.join(ROOT2, "稿件", f"{pre}-裸文版.md")
         if not os.path.exists(p):
             continue
         first = [l for l in open(p, encoding="utf-8").read().splitlines() if l.strip()][0]

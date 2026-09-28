@@ -21,7 +21,7 @@ import sys
 import json
 from collections import Counter
 
-SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "wxfetch")
+SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "_raw-存档", "wxfetch")
 
 NAME = "lf"
 

@@ -16,7 +16,7 @@ import random
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FEAT = os.path.join(ROOT, "corpus_own", "_final.json")
-OUT = os.path.join(ROOT, "盲测-现场-无参考")
+OUT = os.path.join(ROOT, "评测", "盲测-现场-无参考")
 EXCLUDE = {77, 207, 48}          # 三篇对照稿，不能出现在校准样本里
 N_CALIB = 8
 
@@ -46,7 +46,7 @@ def main():
             f.write(f"**{r['headline']}**\n\n{r['text'].strip()}\n\n---\n\n")
 
     # 待判稿：从第一轮文件里抽出四篇，保持 A–D 标签与原顺序
-    src = os.path.join(ROOT, "盲测-校准轮-第一轮-裸文.md")
+    src = os.path.join(ROOT, "评测", "盲测-校准轮-第一轮-裸文.md")
     with open(src, encoding="utf-8") as f:
         txt = f.read()
     blocks = re.split(r"\n## 稿件 ", txt)[1:]

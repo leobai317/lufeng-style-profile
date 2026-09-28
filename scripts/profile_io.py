@@ -69,7 +69,7 @@ def project_root(default=None):
         if not c:
             continue
         if (os.path.isdir(os.path.join(c, "corpus_own"))
-                or os.path.exists(os.path.join(c, "首篇-裸文版.md"))):
+                or os.path.isdir(os.path.join(c, "稿件"))):
             return os.path.abspath(c)
     return os.path.abspath(default or os.getcwd())
 

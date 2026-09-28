@@ -133,8 +133,50 @@ def measure_body(body):
     return m
 
 
+# 文艺腔收尾标记（第 02 轮远程稿的实际写法："今夜，你打算把灯留到几点呢？"）
+LYRICAL_END = ["今夜", "夜深", "你打算", "不妨", "让我们", "一同", "愿你",
+               "何妨", "且听", "但愿", "让我们一起"]
+# 他的固定收束程式：总结判断 + 段末反问
+PROGRAM_END = ["总之", "可见", "由此看来", "说到底", "一句话"]
+
+
+def position_checks(body, paras):
+    """口癖语法位置 + 收束程式。
+
+    返回 (hard, soft, lyrical)：
+      hard    —— 必改（「不是吗。」句号版，真文 0/425）
+      soft    —— 提示（问句后接，真文 1.6%）
+      lyrical —— 提示（文艺腔收尾，真文 3.4%）
+    """
+    hard, soft = [], []
+    mid = 0
+    for p in paras:
+        for mt in re.finditer("不是吗", p):
+            tail = re.sub(r"\s", "", p[mt.end():])
+            if tail.startswith("。"):
+                hard.append(f"「不是吗。」句号版——全库 0/425，段首：{p[:24]}…")
+            if tail and not tail.startswith(("？", "?")):
+                # 后接还有内容且不是问号收尾 → 句中嵌（他本人 16% 这么用，不判违规，只计数）
+                mid += 1
+            pre = [s for s in re.split(r"(?<=[。！？；])", p[:mt.start()]) if s.strip()]
+            if pre and pre[-1].strip().endswith("？"):
+                soft.append(f"口癖接在问句后（真文仅 7/425）：…{pre[-1].strip()[-24:]}｜不是吗")
+
+    lyrical = []
+    last = paras[-1] if paras else ""
+    hits = [w for w in LYRICAL_END if w in last]
+    if hits:
+        lyrical.append(f"末段含文艺腔词 {'、'.join(hits)}——真文仅 4/118（3.4%）：{last[:36]}…")
+    if last.rstrip().endswith("呢？"):
+        lyrical.append("末段以「…呢？」抒情问句收——他的收束是总结判断 + 「不是吗？」")
+    if not any(w in last for w in PROGRAM_END) and "不是吗" not in last:
+        lyrical.append("末段既无总结词也无「不是吗？」——真文 63.6% 以「不是吗？」收、"
+                       "46.6% 带总结词，两者皆无只占少数")
+    return hard, soft, lyrical, mid
+
+
 def main():
-    path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "首篇-裸文版.md")
+    path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "稿件", "首篇-裸文版.md")
     if not os.path.exists(path):
         print(f"找不到稿件：{path}")
         sys.exit(2)
@@ -188,6 +230,33 @@ def main():
     for name, ok in flaws:
         print(f"  {'✓' if ok else '✗'} {name}")
     print("  · 单例归纳的跳跃、素材贴标签——程序难判，须人工确认")
+
+    # ── 第 03 轮 §4.1／§4.3：口癖语法位置 + 收束程式 ──────────────────
+    # 依据是全量核验（tools/verify_round03_claims.py，118 篇）：
+    #   「不是吗。」句号版 **0/425** → 硬规则，出现即为破绽
+    #   嵌在段中 68/425（16%）→ 他本人就这么用，**不判违规**（评委说它是破绽，
+    #   核验不成立）
+    #   接在问句后 7/425（1.6%）→ 稀疏，只提示
+    #   文艺腔收尾 4/118（3.4%）→ 只提示
+    hard, soft, lyrical, kouxu_mid = position_checks(body, m["_plist"])
+    print("\n口癖语法位置（第 03 轮核验 · 425 处真值）：")
+    if hard:
+        for w in hard:
+            print(f"  ✗ {w}")
+    else:
+        print("  ✓ 无「不是吗。」句号版（全库 0/425，写了必露）")
+    for w in soft:
+        print(f"  ⚠ {w}")
+    if not soft:
+        print("  ✓ 无问句后接口癖（真文仅 1.6%）")
+    print(f"  · 嵌在段中 {kouxu_mid} 处——真文 16% 也这么用，不判违规")
+    print("\n收束程式（第 03 轮核验 · 118 篇）：")
+    if lyrical:
+        for w in lyrical:
+            print(f"  ⚠ {w}")
+    else:
+        print("  ✓ 末段无文艺腔标记（真文仅 3.4% 抒情收尾，仿写不用）")
+
     print(f"\n  参考（不判定）：「当」共 {m['dang']} 次——"
           f"其中「当…时」从句与「当年/当下」无法自动区分，故不纳入指标")
 

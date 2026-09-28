@@ -35,9 +35,9 @@ def body(path, marker=None):
 def main():
     prefix = sys.argv[1] if len(sys.argv) > 1 else "首篇"
     paths = {
-        "裸文版": (os.path.join(ROOT, f"{prefix}-裸文版.md"), None),
-        "完整包装版": (os.path.join(ROOT, f"{prefix}-完整包装版.md"), None),
-        "归档版": (os.path.join(ROOT, f"{prefix}-归档版.md"), MARKER),
+        "裸文版": (os.path.join(ROOT, "稿件", f"{prefix}-裸文版.md"), None),
+        "完整包装版": (os.path.join(ROOT, "稿件", f"{prefix}-完整包装版.md"), None),
+        "归档版": (os.path.join(ROOT, "稿件", f"{prefix}-归档版.md"), MARKER),
     }
     bodies = {}
     for name, (p, marker) in paths.items():

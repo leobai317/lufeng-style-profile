@@ -44,7 +44,7 @@ from check_flaws import metrics as flaws_metrics, COLLOQ  # noqa: E402
 ROOT = project_root(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 FEAT = os.path.join(ROOT, "corpus_own", "_final.json")
 GEN = "tools/make_profile.py"
-GENERATED_AT = "2026-09-23"
+GENERATED_AT = "2026-09-28"
 
 GENRE = "下水议论文"          # 目标文体（子类的第一维）
 NAME_RE = "lf"
@@ -123,6 +123,42 @@ def dist(vals):
     }
 
 
+# 标点／空白：用来把「标点序列」排除出重复片段（见 repeated_frag 的反向测试教训）。
+_PUNCT = re.compile(r"[，。！？、；：「」『』“”‘’\"'（）()《》〈〉—…·\s]")
+
+
+def repeated_frag(p):
+    """段内重复 ≥3 次的 2–5 字片段（第 06 轮 #4「毛边」的可靠判据）。
+
+    为什么用这个判据：第 05 轮评委说远程稿"排比太工整、判断句自我复制"，
+    而真文是**笨凿的重复**（"再愚拙的走一次亲戚……再愚拙的发一下"同形容词硬凿三次）。
+    "硬凿"在文本上就是同一个词/句式在一段里反复——这是**能从语料里真提取出来**的。
+    排除「不是吗」「可见」，避免与 kouxu_burst / kejian_link 两类重叠。
+
+    放在模块级而不是嵌在 build_samples 里：嵌套函数拿不到，没法单独做反向测试
+    （第一版就是嵌着的，测试直接 KeyError——这本身就是个提醒）。
+    """
+    for L in (2, 3, 4, 5):
+        cnt = {}
+        for i in range(len(p) - L + 1):
+            f = p[i:i + L]
+            # 双向排除：口癖与「可见」已各有专类（kouxu_burst / kejian_link），
+            # 这里再收一遍就是重复计。注意要**双向**——f="不是" 不含"不是吗"，
+            # 但它是"不是吗"的一部分，单向判会漏（口癖密集段会被误收进毛边类）。
+            if ("不是吗" in f or f in "不是吗"
+                    or "可见" in f or f in "可见"):
+                continue
+            # 含标点的片段一律不要：否则「吗？」×4、「见，」×3 这种**标点序列**
+            # 会被当成硬凿重复（反向测试抓到的假阳性）。要找的是**词**的反复。
+            if _PUNCT.search(f):
+                continue
+            cnt[f] = cnt.get(f, 0) + 1
+        for f, c in sorted(cnt.items(), key=lambda kv: -kv[1]):
+            if c >= 3:
+                return f, c
+    return None
+
+
 def build_samples(rs):
     """风格样本层（第 01 轮盲测主修，2026-09-24）。
 
@@ -150,7 +186,8 @@ def build_samples(rs):
                 break
         return kept
 
-    burst, kejian, shix, opening, ending, stance, ragged = [], [], [], [], [], [], []
+    burst, kejian, shix, opening, ending, stance, ragged, roughen = (
+        [], [], [], [], [], [], [], [])
     for r in rs:
         t, n = r["text"], r["n"]
         ps = paras_of(t)
@@ -175,6 +212,12 @@ def build_samples(rs):
         m = re.search(r"[^。！？\n]{0,15}(我是[^。！？\n]{1,18}|我相信[^。！？\n]{1,30}"
                       r"|我对此[^。！？\n]{1,18}|我看[^。！？\n]{1,25})[！？。]", t)
         if m: stance.append({"n": n, "text": m.group(0).strip()})
+        for p in ps:
+            flat = re.sub(r"\s", "", p)
+            rp = repeated_frag(flat)
+            if rp and 40 <= len(flat) <= 320:
+                roughen.append({"n": n, "text": p, "frag": rp[0], "times": rp[1]})
+                break
 
     out["usage"] = ("生文前必读——这是「他怎么写字」的样子。学手法、学气息、学毛边，"
                     "禁止整句照抄进稿（样本会随语料刷新）。"
@@ -182,10 +225,17 @@ def build_samples(rs):
     out["kouxu_burst"] = {
         "learn": ("「不是吗」是情绪喷发：同一段里连用两三次（全库单段最多 4 个），"
                   "且位置跟着情绪走——绝不是每段末尾打卡。含「不是吗」的段通常只占三到五成，"
-                  "其余段一个都没有，疏密是乱的。"),
+                  "其余段一个都没有，疏密是乱的。"
+                  "**语法位置（第 03 轮全量核验，425 处）**：① 后接标点**必须是「？」**——"
+                  "「不是吗。」句号版全库 **0 处**，写一次露一次；"
+                  "② 84% 作段末结论，16% 嵌在段中（**是真的有，不是错**——"
+                  "评委说「句中嵌是破绽」，核验不成立，别见一个改一个）；"
+                  "③ 前一句是问句的仅 7 处（1.6%），属稀疏用法，仿写慎用。"),
         "items": cap(burst, 8, 400)}
     out["kejian_link"] = {
-        "learn": ("「可见」必须紧跟具体例证、由例推出结论；收在抽象判断上是空转（自检器会抓）。"),
+        "learn": ("「可见」必须紧跟具体例证、由例推出结论；收在抽象判断上是空转（自检器会抓）。"
+                  "**不得借「可见」引入新例证**——那是「用结论词带新料」，"
+                  "全库 262 个「可见」句里只有 1 句这么用（0.4%）。"),
         "items": cap(kejian, 8, 220)}
     out["shixiang"] = {
         "learn": "「试想／如此这般」的推进式说理：假设下去，把后果说出来。",
@@ -194,7 +244,12 @@ def build_samples(rs):
         "learn": "开头直入话题，不摆骨架、不解释结构（评委抓过「首段解释得过于明白」）。",
         "items": cap(opening, 8, 160)}
     out["ending"] = {
-        "learn": "结尾常以反问收、直接呼告读者（你呢？不是吗？），但不是每篇都反问。",
+        "learn": ("结尾常以反问收、直接呼告读者（你呢？不是吗？），但不是每篇都反问。"
+                  "**收束是程式，不是抒情（第 03 轮全量核验，118 篇）**："
+                  "63.6% 以「不是吗？」收尾，46.6% 的末段带总结词（总之／可见／说到底）；"
+                  "抒情问句收尾只有 4 篇（3.4%）。"
+                  "仿写**禁用文艺腔**收尾（「今夜，你打算把灯留到几点呢？」这类）——"
+                  "写法是：总结判断 + 段末反问。"),
         "items": cap(ending, 8, 240)}
     out["stance"] = {
         "learn": ("第一人称立场句：约三分之一篇章出现，可短到「我是赞成的。」——"
@@ -204,6 +259,22 @@ def build_samples(rs):
         "learn": ("段落长短故意不平整：短段一句一行，长段两三百字——「文似看山不喜平」。"
                   "每条含同一篇里的最短段与最长段对照。"),
         "items": cap(ragged, 6, 340)}
+    out["roughen"] = {
+        "learn": ("**毛边是特征，不是清单（第 06 轮 #4 → 第 07 轮 #3 修正）**。"
+                  "第 05 轮评委说远程稿「排比太工整、判断句自我复制、素材精确贴题零损耗」，"
+                  "而真文是**笨凿的重复、堆砌而不裁剪**。"
+                  "**但第 06 轮把这一类当成了「照单补毛边」，反被评委识破**——"
+                  "「这些毛边像是按清单补进去的」。清单化的特征一旦被刻意复制，本身就是新破绽："
+                  "**按清单补破绽也是破绽**（与「写得太好是破绽」是同一枚硬币的两面）。"
+                  "⚠ **所以下面这些例子只是「他长什么样」的证据，不是待办清单，不许逐条复制。** "
+                  "本类**能从语料提取**的只有一种：同一个词或同一句式在一段里硬凿三次以上。"
+                  "另五类**不可程序化提取**：错字／脱字、引语记串（把「独立之精神，自由之思想」"
+                  "写成「独立之人格」）、成语误用（「不为人齿」）、「啊」当句号、"
+                  "素材一口气压五六个名字不解释。"
+                  "它们的**真实来源是赶稿过程**——不回头的崩句、念顺了反复说、随手写错，"
+                  "**不可提取，只能靠通篇气息**，不是往稿子里插几条。"
+                  "凡自己觉得「这句写得漂亮」「这个排比很齐」「这条毛边我补上了」，就再检查一遍。"),
+        "items": cap(roughen, 6, 340)}
     return out
 
 
@@ -541,7 +612,7 @@ def to_md(p):
     if s:
         L += ["", "## 风格样本层（生文前必读）", "", f"> {s['usage']}", ""]
         for key in ["kouxu_burst", "kejian_link", "shixiang", "opening",
-                    "ending", "stance", "ragged"]:
+                    "ending", "stance", "ragged", "roughen"]:
             blk = s.get(key)
             if not blk:
                 continue
@@ -549,6 +620,8 @@ def to_md(p):
             for it in blk["items"]:
                 if "short" in it:
                     L += [f"- （#{it['n']}）短段：{it['short']}", f"  - 同篇最长段：{it['long']}"]
+                elif "frag" in it:
+                    L.append(f"- （#{it['n']}）重复「{it['frag']}」×{it['times']}：{it['text']}")
                 else:
                     L.append(f"- （#{it['n']}）{it['text']}")
             L.append("")

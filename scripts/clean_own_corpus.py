@@ -9,11 +9,21 @@ lf本人语料库 · 清洗器
   corpus_own/clean/own_NNNN.txt   纯净版
   corpus_own/_features.json       追加 cleaned 字段（剪掉了什么、多少字、哪条规则）
 
-流水线（分四遍，每遍职责单一，便于定位误剪）
+流水线（分五遍，每遍职责单一，便于定位误剪）
   A  R1 图片文件名行 / R2 「本期点评：X」署名行     —— 安全，无条件执行
   B  R4 尾部栏目标题行 / R5 尾部下一篇标题行          —— 结构性，带误剪回退
   C  R3 「总评：」起至段末（点评人的总评块）          —— 有意剥离
-  D  R6 段末评点夹批（正文已收句，后面还挂完整成句的括号）—— 有意剥离
+  C' R9 文末评点块（独立成行的「全文点评：／文章总评：／【点评】／教师点评」）
+                                                          —— 有意剥离（2026-09-28 新增，堵 #0128/#0138）
+  D  R6 评点夹批（段末、段中、整行三种位置的括号批注）
+                                                          —— 有意剥离（2026-09-28 改配对括号，堵 #0143/#0175/#0172）
+
+R6 为什么重写（2026-09-28，第 04 轮 #6）：
+  旧规则只认「行末的括号 + 括号前是句末标点 + 括号内无嵌套」，实测漏掉三类——
+  ① 括号内含嵌套括号（#0175 的「现象（极点）→…」），旧正则 `[^（）()]` 直接失配；
+  ② 段中夹批（#0143，括号后面还接着正文）；
+  ③ 括号前是「：」或整行只有一个括号（#0143「理由如下：（…）」、#0172 四行）。
+  现按**配对括号解析**（支持嵌套，深度归零才算配对）逐个判，判据三条见 should_strip()。
 
 回退阀只作用于 B：诗歌整篇是无标点短句，最容易被 R5 吃光，
 所以诗歌体直接跳过 B，且 B 剪掉超过 10% 就整体回退并记账。
@@ -44,7 +54,57 @@ COMMENT_KW = [
     "评分", "符合", "体现", "展示", "彰显", "紧扣", "开篇", "结构", "论证",
     "过渡段", "总结全文", "升华", "呼应", "设计", "技法", "妙在", "亮点",
     "考纲", "阅卷", "主旋律", "思辨", "谋篇", "文采", "立意",
+    # —— 2026-09-28 扩：评点人的行文动词（作者本人的括注里实测 0 命中，见当日日志探针）——
+    "重申", "回扣", "点题", "扣题", "照应", "承接", "总领", "点明",
+    "亮明", "阐明", "铺垫", "收束", "引出",
 ]
+
+# R9：独立成行的文末评点块标记（R3 只认「总评：」，这两个此前整块漏网：#0128/#0138）
+TAIL_MARK_RE = re.compile(r"^\s*(?:全文点评|文章总评|【点评】|教师点评)\s*[：:]")
+# R6 判「括号前是否已收句」用的终止符；比 END_PUNCT 窄，含全角冒号（「理由如下：（…）」）
+R6_BEFORE_TERM = "。！？…”』）："
+
+
+def bracket_groups(s):
+    """配对括号解析（支持嵌套）：返回 [(start, end, inner)]，深度归零才算配对。
+
+    旧的 `[（(]([^（）()]{6,})[）)]` 遇到 inner 里再出现括号就整体失配——
+    #0175 的夹批含「现象（极点）→原因（调整）」，因此漏剪。
+    """
+    out, stack, i = [], [], 0
+    while i < len(s):
+        c = s[i]
+        if c in "（(":
+            stack.append(i)
+        elif c in "）)" and stack:
+            a = stack.pop()
+            if not stack:
+                out.append((a, i + 1, s[a + 1:i]))
+        i += 1
+    return out
+
+
+def should_strip_bracket(before, after, inner):
+    """R6 判据：返回 (剪不剪, 记账用的原因)。三条命中任一即剪。
+
+    1 关键词  —— 括号内含评点评语词（COMMENT_KW）
+    2 长夹批  —— inner ≥ 20 字：评点是整句评价，作者自己的括注实测都在 20 字内
+    3 双句末  —— 括号前后都已收句（「不是吗？（重申我方观点）」这类短批语）
+    整行只有一个括号时按 1/2 判（#0172 四行 54–78 字的纯批注行）。
+    """
+    if len(inner) < 6:
+        return False, "太短"
+    whole_line = not (before or after)
+    if any(k in inner for k in COMMENT_KW):
+        return True, "关键词" + ("·整行" if whole_line else "")
+    if len(inner) >= 20:
+        return True, ("整行批注" if whole_line else f"长夹批{len(inner)}字")
+    if whole_line:
+        return False, "整行短括号（保留）"
+    if inner[-1] in "。！？" and before and before[-1] in R6_BEFORE_TERM:
+        return True, "双句末"
+    return False, "保留"
+
 
 # —— R7：正文中途出现这些 → 后面都不是他的，就地截断 ——
 # 触发 R7 的实测案例：某段后面吞进了「某校　张　三」「某校  李 四」两位老师
@@ -127,8 +187,26 @@ def pass_c(text):
     return "\n".join(lines[:idx]).strip(), [["R3总评块", "\n".join(lines[idx:])[:160]]]
 
 
+def pass_f(text):
+    """R9 文末评点块：独立成行的「全文点评：／文章总评：／【点评】／教师点评」起截到文末
+
+    #0128「文章总评：」、#0138「全文点评：」——公众号编辑的评点，非本人文字，
+    混在确证真文里既污染画像统计，又让盲测对照在"文本干净度"上白送分（第 03 轮假阳线）。
+    i < 1/3 行数才触发：第一屏就出现评点头说明整篇都是评点体，全剪等于清空，直接跳过。
+    """
+    lines = text.splitlines()
+    third = max(len(lines) // 3, 1)
+    for i, l in enumerate(lines):
+        if i < third:
+            continue
+        if TAIL_MARK_RE.match(l):
+            return ("\n".join(lines[:i]).strip(),
+                    [["R9文末评点块", "\n".join(lines[i:])[:160]]])
+    return text, []
+
+
 def pass_d(text):
-    """R6 段末评点夹批 + R8 行尾「（点评人：X）」"""
+    """R6 评点夹批（段末 / 段中 / 整行）+ R8 行尾「（点评人：X）」"""
     dropped, out = [], []
     for line in text.splitlines():
         s = line.rstrip()
@@ -136,13 +214,15 @@ def pass_d(text):
         if m:
             dropped.append(["R8点评人括注", m.group(0)])
             s = s[:m.start()].rstrip()
-        m = re.search(r"[（(]([^（）()]{6,})[）)]\s*$", s)
-        if m:
-            inner, before = m.group(1), s[:m.start()].rstrip()
-            if before and before[-1] in "。！？…”』）":
-                if any(k in inner for k in COMMENT_KW) or inner[-1] in "。！？":
-                    dropped.append(["R6评点夹批", inner[:60] + ("…" if len(inner) > 60 else "")])
-                    s = before
+        # 从右往左逐个判：剪掉一个不影响左边括号的起止位置
+        for a, b, inner in reversed(bracket_groups(s)):
+            before, after = s[:a].rstrip(), s[b:].strip()
+            ok, why = should_strip_bracket(before, after, inner)
+            if not ok:
+                continue
+            tag = "R6评点夹批·整行" if not (before or after) else "R6评点夹批"
+            dropped.append([tag, inner[:60] + ("…" if len(inner) > 60 else ""), why])
+            s = before + after          # 直接拼回去 = 这个括号从没存在过
         out.append(s)
     return "\n".join(out).strip(), dropped
 
@@ -198,6 +278,7 @@ def main():
             rollbacks.append(r["n"])
         t, d = pass_e(t);                       dropped += d
         t, d = pass_c(t);                       dropped += d
+        t, d = pass_f(t);                       dropped += d
         t, d = pass_d(t);                       dropped += d
 
         # 底线：剪完不足 100 字（诗歌 40 字）→ 回退全文
@@ -228,8 +309,8 @@ def main():
             "q_per_k": round((t.count("？") + t.count("?")) / cc * 1000, 3) if cc else 0,
             "ellipsis": t.count("……"),
         }
-        for name, _ in dropped:
-            stat[name] = stat.get(name, 0) + 1
+        for rec in dropped:
+            stat[rec[0]] = stat.get(rec[0], 0) + 1
 
     with open(FEAT, "w", encoding="utf-8") as f:
         json.dump(records, f, ensure_ascii=False, indent=1)

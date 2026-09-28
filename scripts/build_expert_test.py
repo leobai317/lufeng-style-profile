@@ -25,7 +25,7 @@ from profile_io import project_root   # noqa: E402
 # 项目根：STYLE_PROJECT 优先，其次脚本的上一级（脚本被复制进 skill 后靠 STYLE_PROJECT）
 ROOT = project_root(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 FEAT = os.path.join(ROOT, "corpus_own", "_final.json")
-OUT = os.path.join(ROOT, "专家档-专测")
+OUT = os.path.join(ROOT, "评测", "专家档-专测")
 
 # 伪稿：篇名前缀 -> 裸文版路径（首篇刻意排除，理由见模块 docstring）
 FAKES = ["第二篇", "第三篇"]
@@ -100,7 +100,7 @@ def main():
 
     items = []
     for prefix in FAKES:
-        title, body = read_bare(os.path.join(ROOT, f"{prefix}-裸文版.md"))
+        title, body = read_bare(os.path.join(ROOT, "稿件", f"{prefix}-裸文版.md"))
         items.append({"is_fake": True, "prefix": prefix, "title": title, "body": body,
                       "chars": len(re.sub(r"\s", "", body))})
 
@@ -168,7 +168,7 @@ def main():
             key.append(f"| 第 {it['label']} 篇 | **伪** | {it['prefix']} | {it['title']} | {it['chars']} |")
         else:
             key.append(f"| 第 {it['label']} 篇 | 真 | #{it['n']}（{it['category']}） | {it['title']} | {it['chars']} |")
-    key_path = os.path.join(ROOT, "专家档-专测-答案密钥.md")
+    key_path = os.path.join(ROOT, "评测", "专家档-专测-答案密钥.md")
     with open(key_path, "w", encoding="utf-8") as f:
         f.write("\n".join(key) + "\n")
 
@@ -181,7 +181,7 @@ def main():
     # —— AI 预演目录：另攒 N_REF 篇参考真文（与待判稿不重叠），模拟「读过他文章的人」 ——
     # 参考集刻意比校准轮的 8 篇更大：样本越少，评委越容易从样本里自造硬规律误杀真文。
     import shutil
-    reh = os.path.join(ROOT, "专家档-专测-AI预演")
+    reh = os.path.join(ROOT, "评测", "专家档-专测-AI预演")
     os.makedirs(reh, exist_ok=True)
     shutil.copy2(os.path.join(OUT, "稿件.md"), os.path.join(reh, "待判稿.md"))
 

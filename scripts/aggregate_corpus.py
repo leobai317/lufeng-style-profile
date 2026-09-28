@@ -23,7 +23,7 @@ OUT = os.path.join(ROOT, "corpus_own")
 CONF = os.path.join(OUT, "confirmed")
 FLAG = os.path.join(OUT, "flagged")
 DUP = os.path.join(OUT, "duplicates")
-DOC = os.path.join(ROOT, "lf-本人语料库.md")
+DOC = os.path.join(ROOT, "产出", "lf-本人语料库.md")
 
 # —— 人工改判：自动判定出错时，在此逐条覆盖 ——
 # 格式：段号: (判定, 文体, 完整度, 置信度, 判据)

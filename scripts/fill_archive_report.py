@@ -52,7 +52,7 @@ def replace_report(h, report):
 
 def main():
     prefix = sys.argv[1] if len(sys.argv) > 1 else "首篇"
-    doc = os.path.join(ROOT, f"{prefix}-归档版.md")
+    doc = os.path.join(ROOT, "稿件", f"{prefix}-归档版.md")
     if not os.path.exists(doc):
         print(f"找不到：{doc}")
         sys.exit(1)

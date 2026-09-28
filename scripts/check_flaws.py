@@ -28,7 +28,7 @@ from profile_io import (find_profile, baseline as profile_baseline,  # noqa: E40
 # 项目根：STYLE_PROJECT 优先，其次脚本的上一级（脚本被复制进 skill 后靠 STYLE_PROJECT / cwd）
 ROOT = project_root(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 FEAT = os.path.join(ROOT, "corpus_own", "_final.json")
-DRAFT = os.path.join(ROOT, "首篇-裸文版.md")
+DRAFT = os.path.join(ROOT, "稿件", "首篇-裸文版.md")
 
 PROFILE, PROFILE_PATH = find_profile()
 PROFILE_BASE = profile_baseline(PROFILE, "flaws")
