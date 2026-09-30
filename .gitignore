@@ -35,6 +35,7 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+.ruff_cache/
 
 # ── 编辑器与系统 ────────────────────────────────────────────────
 .vscode/
