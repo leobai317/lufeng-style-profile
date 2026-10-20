@@ -5,7 +5,24 @@
 目标子类：下水议论文 × 辩证哲思类 × 900–1100 字
 真值来源：tools/strata_stats.py 的分目别类统计（确证去重 178 篇）
 
-用法：python check_draft.py <稿件路径>
+用法：
+    python check_draft.py <稿件路径>
+    python check_draft.py <稿件路径> --quota-band <档位>   # 本题配额档（见下）
+
+**配额档（2026-10-20 项目 owner 拍板「量纲冲突修法」）**
+第 08 轮实锤两把尺子打架：跨题配额按**次数**派密度档（低 2–3 / 中 4–5 / 高 7–8 次），
+本自检按 **bushi_para** 判（带 45–55%），于是低密档必低于带、高密档必高于带。
+但「把配额单位改成 bushi_para」是句空话——`tools/probe_density_bands.py` 实测
+口癖次数与 bushi_para 相关系数 **0.877**（与 tail_q 0.852、q 0.735），
+**密度是一个旋钮，不是三个**，换单位不改变任何东西。
+
+真冲突是：**配额故意把三篇派到均值两侧**（防「三篇一样」这个第 04 轮的老病），
+而自检带只对准均值（45–55%）。真文实测「口癖 1–3 次」档的 bushi_para 是
+**17–32%**——**完全在带外，却完全在真文分布内**。
+
+所以修法是：**自检认配额档**。`--quota-band` 传入本题档位后，
+该档涉及的指标按档位区间判，并标注「（按本题配额档）」；
+**不传时行为与从前完全一致**（仍按 profile 的带判），避免旧流程被静默改口径。
 """
 import json
 import os
@@ -46,6 +63,67 @@ TARGETS_BUILTIN = [
 ]
 
 MATERIALS_BUILTIN = ["毛泽东", "史铁生", "黄文秀", "鲁迅", "路遥", "张桂梅", "袁隆平"]
+
+# ── 密度档（2026-10-20 项目 owner 拍板「量纲冲突修法」）────────────────────────────
+# 三档的区间**全部来自 118 篇真文实测**（`tools/probe_density_bands.py`），
+# 按「口癖次数」分档后取各项的 p25–p75，不是拍脑袋定的：
+#
+#   档   篇数   bushi_para        tail_q          q
+#   低    51     17–32%           14–29%         3–6      （口癖 1–3 次）
+#   中    34     43–70%           41–67%         5–8      （口癖 4–5 次）
+#   高    24     67–89%           67–86%         7–10     （口癖 6–9 次）
+#
+# ⚠ **这三档都落在真文分布内，但低档完全在 profile 的带（45–55%）之外**——
+# 这正是第 08 轮那三个「未达标」的来源：稿子没错，是尺子在打架。
+#
+# ⚠ **判据设计（实测逼出来的，不能想当然）**：
+# 主判据是**口癖次数**（配额直接给的量，与段数无关）；
+# bushi_para / tail_q / q 是**同档参考带**——它们受**段数**强烈干扰：
+# 实测「口癖 3 次」的真文，bushi_para 从 23% 到 60%（4–15 段不等），
+# 所以拿段占比当判据会在段数偏多的稿子上误杀。参考带只**提示**，不判红。
+#
+# ⚠ **不传 --quota-band 时行为与从前完全一致**（仍按 profile 的带判）：
+# 旧轮次与自用稿件不能被静默改口径。
+DENSITY_BANDS = {
+    "low":  {"label": "低密档", "kouxu": (1, 3), "bushi_para": (17, 32),
+             "tail_q": (14, 29), "q": (3, 6)},
+    "mid":  {"label": "中密档", "kouxu": (4, 5), "bushi_para": (43, 70),
+             "tail_q": (41, 67), "q": (5, 8)},
+    "high": {"label": "高密档", "kouxu": (6, 9), "bushi_para": (67, 89),
+             "tail_q": (67, 86), "q": (7, 10)},
+}
+
+# 中文档名 → 内部键（配额表里可能写"低密档"）
+DENSITY_ALIAS = {"低": "low", "低密档": "low", "中": "mid", "中密档": "mid",
+                 "高": "high", "高密档": "high"}
+
+
+def resolve_band(name):
+    """档位名 → DENSITY_BANDS 的一项；认不出来返回 None（不静默回落成某个档）。
+
+    ⚠ **必须精确匹配**：曾用 `if "高密档" in name` 这种子串匹配，
+    结果「超高密档」被悄悄认成「高密档」——**非法输入被当成合法档位接受**，
+    比报错更坏（它会给出错误的"合规"读数）。所以：先剥空格与大小写，
+    再查全等表；表里没有就返回 None 交给调用方报错。
+    """
+    if not name:
+        return None
+    s = str(name).strip()
+    if s in DENSITY_BANDS:
+        return DENSITY_BANDS[s]
+    if s in DENSITY_ALIAS:
+        return DENSITY_BANDS[DENSITY_ALIAS[s]]
+    low = s.lower()
+    if low in DENSITY_BANDS:
+        return DENSITY_BANDS[low]
+    # 允许「低密档（口癖 1–3 次）」这类带括号说明的写法：取首个括号前部分精确查表
+    head = s.split("（")[0].split("(")[0].strip()
+    if head in DENSITY_BANDS:
+        return DENSITY_BANDS[head]
+    if head in DENSITY_ALIAS:
+        return DENSITY_BANDS[DENSITY_ALIAS[head]]
+    return None
+
 
 
 def _wl(profile, key):
@@ -186,20 +264,62 @@ def main():
         sys.exit(2)
     targets = load_targets(PROFILE)
 
+    # ── 配额档（可选）────────────────────────────────────────────────────
+    # 主判据＝**口癖次数**（配额直接给的量，与段数无关）；
+    # bushi_para / tail_q / q 是**同档参考带**（受段数干扰，只提示不判红）。
+    band = None
+    if "--quota-band" in sys.argv:
+        i = sys.argv.index("--quota-band")
+        raw = sys.argv[i + 1] if i + 1 < len(sys.argv) else ""
+        band = resolve_band(raw)
+        if band is None:
+            print(f"认不出配额档「{raw}」——可用：{', '.join(DENSITY_BANDS)}"
+                  f"（或中文档名：低密档／中密档／高密档）")
+            sys.exit(2)
+
     print(f"稿件：{os.path.basename(path)}")
     print(f"段落 {m['_paras']} 段 / {m['chars']} 字")
     print(caliber_line(PROFILE, PROFILE_PATH))
+    if band:
+        klo, khi = band["kouxu"]
+        kcnt = body.count("不是吗")
+        print(f"**本题配额档：{band['label']}**（口癖 {klo}–{khi} 次）")
+        print(f"  实测口癖 {kcnt} 次 —— "
+              f"{'✓ 落在档内' if klo <= kcnt <= khi else '✗ 档外'}")
+        print(f"  同档参考带（受段数影响，只提示不判红）："
+              f"口癖段占比 {band['bushi_para'][0]}–{band['bushi_para'][1]}%｜"
+              f"段末反问 {band['tail_q'][0]}–{band['tail_q'][1]}%｜"
+              f"问号 {band['q'][0]}–{band['q'][1]} 个")
     print()
     print(f"{'指标':<24}{'实测':>10}{'目标区间':>14}   判定")
     print("-" * 68)
     fails = []
+    # 配额档的主判据：口癖次数（与段数无关，配额直接给的量）——单列一行
+    if band:
+        klo, khi = band["kouxu"]
+        kcnt = body.count("不是吗")
+        ok_k = klo <= kcnt <= khi
+        print(f"{'「不是吗」出现次数':<24}{kcnt:>10}{f'{klo}–{khi}':>14}   "
+              f"{'通过' if ok_k else '✗ 未达'}（本题配额档主判据）")
+        if not ok_k:
+            fails.append(("「不是吗」出现次数", kcnt, (klo, khi),
+                          "本题配额档区间（118 篇真文同档实测）", True))
     for key, label, (lo, hi), note in targets:
         v = m[key]
         ok = lo <= v <= hi
         vs = f"{v:.2f}" if isinstance(v, float) else str(v)
-        print(f"{label:<24}{vs:>10}{f'{lo}–{hi}':>14}   {'通过' if ok else '✗ 未达'}")
+        # 配额档生效时：密度三项改按同档参考带判，档外标「档外参考」而非「未达」
+        tag = ""
+        dlo, dhi = lo, hi
+        if band and key in ("bushi_para", "tail_q", "q"):
+            dlo, dhi = band[key]
+            in_band = dlo <= v <= dhi
+            ok = True                      # 参考带不判红
+            tag = ("（档外·仅提示）" if not in_band else "（按本题配额档）")
+        print(f"{label:<24}{vs:>10}{f'{dlo}–{dhi}':>14}   "
+              f"{'通过' if ok else '✗ 未达'}{tag}")
         if not ok:
-            fails.append((label, v, (lo, hi), note))
+            fails.append((label, v, (lo, hi), note, False))
 
     print("\n素材使用：")
     used = [x for x in MATERIALS_OK if x in body]
@@ -263,8 +383,14 @@ def main():
     print("\n" + "=" * 68)
     if fails:
         print(f"未达标 {len(fails)} 项：")
-        for label, v, (lo, hi), note in fails:
-            print(f"  · {label}：实测 {v:.2f}，目标 {lo}–{hi}（真值依据：{note}）")
+        for label, v, (lo, hi), note, is_band in fails:
+            src = ("本题配额档区间（来自 118 篇真文同档实测）" if is_band
+                   else f"真值依据：{note}")
+            print(f"  · {label}：实测 {v:.2f}，目标 {lo}–{hi}（{src}）")
+        if band:
+            print("\n  ⚠ 密度三项（口癖段占比／段末反问／问号）在配额档下**只提示不判红**——"
+                  "它们受段数强烈干扰（真文「口癖 3 次」的段占比从 23% 到 60%）。"
+                  "档位的**主判据是口癖次数**。")
     else:
         print("全部指标通过。")
 

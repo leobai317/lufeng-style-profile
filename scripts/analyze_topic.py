@@ -93,10 +93,30 @@ PRONOUN_HEAD = "这那其该此每某一"
 WORD_MAX = 8
 
 
+# 写作指令 / 要求套话：从这一句起到底，全都**不是题面内容**。
+# 实测踩坑（专家档-第2轮 组包时发现）：规范式题面的收尾套话「不得泄露个人信息」
+# 会让题材判定命中「信息」→ 把「低头做事与抬头看路」误判成 **科技·数据·AI**，
+# 于是取错阈值列、召回的 few-shot 也全是科技类。**判题材前必须先整段切掉这一段。**
+INSTR_TAIL_RE = re.compile(
+    r"(?:要求\s*[：:]"
+    r"|以上材料[^。]*?(?:请|启示|思考)"
+    r"|针对以上[^。]*?。"
+    r"|你有什么[^。]*?。"
+    r"|请写一篇[^。]*。"
+    r"|你怎么看[^？?]*[？?]"
+    r"|请结合[^。]*。)"
+    r"[\s\S]*$"
+)
+
+
+def strip_instructions(text):
+    """切掉结尾的写作指令/要求套话，只留题面的材料本体。"""
+    return INSTR_TAIL_RE.sub("", text).strip()
+
+
 def load_profile():
     p, src = find_profile()
     return p, src
-
 
 def load_rows():
     """语料里的目标子类篇目；语料不在本机时返回 None（skill 独立运行模式）。"""
@@ -117,6 +137,7 @@ def topic_words(text):
     于是召回的"可比篇目"共用词是「理解」，等于没召。
     """
     raw = []
+    text = strip_instructions(text)      # 先切掉「要求：…」「以上材料…请写一篇文章」等指令段
     # 中文引号与 ASCII 单引号都认——外部题面常把题眼写成 '输与赢' 这种形式
     for m in re.finditer(r"[“「『]([^”」』]{2,20})[”」』]|'([^']{2,20})'", text):
         body = m.group(1) or m.group(2) or ""
@@ -165,6 +186,7 @@ def topic_words(text):
 
 def classify(text, topics):
     """题材多标签。返回 [(题材, 命中词数, [命中词…]), …]，按命中数降序。"""
+    text = strip_instructions(text)      # 指令套话不参与题材判定（见 INSTR_TAIL_RE 注释）
     hits = []
     for name, pat in topics.items():
         found = sorted(set(re.findall(pat, text)))
